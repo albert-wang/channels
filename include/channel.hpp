@@ -42,7 +42,15 @@ namespace Engine
 
 		struct Message
 		{
-			
+			Message()
+				:type(NULL_MESSAGE)
+				,integralValue(0)
+			{}
+
+			operator bool() const
+			{
+				return type != NULL_MESSAGE;
+			}
 
 			boost::uint32_t type;
 			boost::uint32_t integralValue;
@@ -90,24 +98,8 @@ namespace Engine
 		public:
 			static boost::intrusive_ptr<Channel> create();
 
-			bool pop(Message * msg, Message * prototype = nullptr, size_t sig = 0)
-			{
-				boost::mutex::scoped_lock lock(mutex);
-
-				if (prototype)
-				{
-				} 
-				else 
-				{
-					*msg = std::move(messages.front());
-					messages.pop_front();
-				}
-			}
-
-			void emplace(Message&& value)
-			{
-
-			}
+			bool pop(Message * msg, Message * prototype = nullptr, size_t sig = 0);
+			void emplace(Message&& value);
 		private:
 			boost::mutex mutex;
 			std::deque<Message> messages;
@@ -115,7 +107,7 @@ namespace Engine
 			volatile long referenceCount;
 		};
 
-		void intrusive_ptr_add_ref(Channel * ch)
+		inline void intrusive_ptr_add_ref(Channel * ch)
 		{
 #ifdef _WIN32
 			InterlockedIncrement(&ch->referenceCount);
@@ -124,7 +116,7 @@ namespace Engine
 #endif
 		}
 
-		void intrusive_ptr_release(Channel * ch) 
+		inline void intrusive_ptr_release(Channel * ch) 
 		{
 #ifdef _WIN32
 			if (InterlockedDecrement(&ch->referenceCount) == 0)

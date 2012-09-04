@@ -21,7 +21,7 @@ namespace Engine
 	//Channel
 	namespace Threading
 	{
-		boost::intrusive_ptr<Channel> create() 
+		boost::intrusive_ptr<Channel> Channel::create() 
 		{
 			Channel * ch = new Channel();
 			return boost::intrusive_ptr<Channel>(ch);
@@ -31,9 +31,29 @@ namespace Engine
 			:referenceCount(0)
 		{}
 
-		bool Channel::pop(Message * msg)
+		bool Channel::pop(Message * msg, Message * prototype, size_t sig)
 		{
-			return false;
+			boost::mutex::scoped_lock lock(mutex);
+			if (messages.empty())
+			{
+				msg->type = NULL_MESSAGE;
+				return false;
+			}
+
+			if (prototype)
+			{
+
+			} 
+			else 
+			{
+				*msg = messages.front();
+				messages.pop_front();
+			}
+		}
+
+		void Channel::emplace(Message&& msg)
+		{
+			messages.push_back(msg);
 		}
 	}
 }
