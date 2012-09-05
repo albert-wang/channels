@@ -2,7 +2,31 @@
 
 namespace Engine
 {
-	//Receving Channel
+	//Matching.
+	namespace Threading
+	{
+		bool matches(const Message& target, const Message& prototype, size_t significance)
+		{
+			if ((significance & SIGNIFICANCE_TYPE) && prototype.type != target.type)
+			{
+				return false; 
+			}
+
+			if ((significance & SIGNIFICANCE_INTEGRAL) && prototype.integralValue != target.integralValue)
+			{
+				return false;
+			}
+
+			if ((significance & SIGNIFICANCE_STORAGE_TYPE) && prototype.storage.type() != target.storage.type())
+			{
+				return false;
+			}
+
+			return true;
+		}
+	}
+
+	//Receiving Channel
 	namespace Threading
 	{
 		Message ReceivingChannel::pop()
@@ -42,18 +66,35 @@ namespace Engine
 
 			if (prototype)
 			{
-
-			} 
+				Message& attemptedMatch = messages.front();
+				if (matches(attemptedMatch, *prototype, sig))
+				{
+					*msg = std::move(attemptedMatch);
+					messages.pop_front();
+					return true;
+				}
+				return false;
+			}
 			else 
 			{
-				*msg = messages.front();
+				*msg = std::move(messages.front());
 				messages.pop_front();
+				return true;
 			}
 		}
 
 		void Channel::emplace(Message&& msg)
 		{
-			messages.push_back(msg);
+			messages.emplace_back(msg);
+		}
+	}
+
+	//Utilities
+	namespace Threading
+	{
+		void schedule(SendingChannel * channel, size_t milliseconds)
+		{
+			
 		}
 	}
 }
