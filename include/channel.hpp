@@ -72,7 +72,7 @@ namespace Engine
 
 
 			boost::uint32_t type;
-			boost::uint32_t integralValue;
+			boost::uint64_t integralValue;
 			boost::any storage;
 
 #ifdef _DEBUG
@@ -93,7 +93,7 @@ namespace Engine
 		{
 		public:
 			template<typename T>
-			void push(boost::uint32_t type, boost::uint32_t integral, const T& u)
+			void push(boost::uint32_t type, boost::uint64_t integral, const T& u)
 			{
 				Message result;
 				result.type = type;
@@ -105,7 +105,7 @@ namespace Engine
 
 #ifdef _DEBUG
 			template<typename T>
-			void push(boost::uint32_t type, boost::uint32_t integral, const T& u, const char * buffer, size_t line)
+			void push(boost::uint32_t type, boost::uint64_t integral, const T& u, const char * buffer, size_t line)
 			{
 				Message result;
 				result.type = type;
@@ -155,14 +155,68 @@ namespace Engine
 		typedef boost::weak_ptr<SendingChannel> wpSendingChannel;
 		typedef boost::weak_ptr<ReceivingChannel> wpReceivingChannel;
 
-		void schedule(wpSendingChannel channel, size_t milliseconds, const Message& msg);
-		void schedule(wpSendingChannel channel, size_t milliseconds);
+		class TimerCollection;
+		void schedule(TimerCollection * collection, wpSendingChannel channel, size_t milliseconds, const Message& msg);
+		void schedule(TimerCollection * collection, wpSendingChannel channel, size_t milliseconds);
+
+		template<typename It>
+		Message pick(It begin, It end, ReceivingChannel ** out = nullptr, Message * prototype = nullptr, size_t significance = 0)
+		{
+			std::vector<ReceivingChannel *> channels;
+			while(begin != end)
+			{
+				channels.push_back((*begin).get());
+				++begin;
+			}
+
+			return pick(&channels[0], channels.size(), out, prototype, significance);
+		}
+
+		Message pick(ReceivingChannel ** channels, size_t length, ReceivingChannel ** out = nullptr, Message * prototype = nullptr, size_t sig = 0);
+
+		template<typename It>
+		Message wait(It begin, It end, size_t timeoutMillis, ReceivingChannel ** out = nullptr, Message * prototype = nullptr, size_t significance = 0)
+		{
+			std::vector<ReceivingChannel *> channels;
+			while(begin != end)
+			{
+				channels.push_back((*begin).get());
+				++begin;
+			}
+
+			return wait(&channels[0], channels.size(), out, prototype, significance);
+		}
+
+		Message wait(ReceivingChannel ** channels, size_t length, size_t timeoutMillis, ReceivingChannel ** out = nullptr, Message * prototype = nullptr, size_t sig = 0);
+
+		template<typename It, typename T> 
+		size_t process(It begin, It end, const T& callbacks)
+		{
+			while(begin != end)
+			{
+				ReceivingChannel * channel = *begin;
+				Message msg;
+
+				while (channel->pop(&msg))
+				{
+					callbacks(msg);
+				}
+
+				++begin;
+			}
+		}
+
+		template<typename T> 
+		void process(ReceivingChannel ** channels, size_t length, const T& callback)
+		{
+			process(channels, channels + length, callback);
+		}
 
 		//Helpful utilities.
 		/*
 		 * schedule(sendingChannel, milliseconds, Message) - Sends the given message in the requested amount of time. 
 		 * schedule(sendingChannel, milliseconds) - Sends a message with a reserved type with integralData = current_time.
-		 * select(ReceivingChannel ** channels, size_t length, ReceivingChannel ** out = nullptr, Message& prototype, size_t significance) - grabs a message from a set of different channels. Nonblocking.
+		 * pick(ReceivingChannel ** channels, size_t length, ReceivingChannel ** out = nullptr, Message& prototype, size_t significance) - grabs a message from a set of different channels. Nonblocking.
 		 * wait(ReceivingChannel ** channels, size_t length, ReceivingCHannel ** out, Message& prototype, size_t significance) - essentially a blocking select.
 		 * launch(ReceivingChannel *, size_t identifier, T lambda) - Calls a function on a different thread, and puts the return value into the storage parameter.
 		 * ReceivingChannel * launch(T lambda) - Creates a channel and then launches a function.

@@ -1,4 +1,5 @@
 #include "channel.hpp"
+#include "timer.h"
 
 namespace Engine
 {
@@ -92,9 +93,76 @@ namespace Engine
 	//Utilities
 	namespace Threading
 	{
-		void schedule(SendingChannel * channel, size_t milliseconds)
+		void schedule(TimerCollection * collection, wpSendingChannel channel, size_t milliseconds)
 		{
-			
+			collection->addTimer(static_cast<double>(milliseconds) / 1000.0, [channel]()
+			{
+				spSendingChannel strongChannel = channel.lock();
+				if (strongChannel)
+				{
+					FILETIME time;
+					GetSystemTimeAsFileTime(&time);
+
+					LARGE_INTEGER unioncast;
+					unioncast.HighPart = time.dwHighDateTime;
+					unioncast.LowPart = time.dwLowDateTime;
+					strongChannel->push(TIMER_FINISHED, unioncast.QuadPart, 0);
+				}
+			});
+		}
+
+		void schedule(TimerCollection * collection, wpSendingChannel channel, size_t milliseconds, const Message& msg)
+		{
+			collection->addTimer(static_cast<double>(milliseconds) / 1000.0, [channel, msg]()
+			{
+				spSendingChannel strong = channel.lock();
+				if (strong)
+				{
+					strong->emplace(std::move(msg));
+				}
+			});
+		}
+
+		Message pick(ReceivingChannel ** channels, size_t length, ReceivingChannel ** out, Message * prototype, size_t sig)
+		{
+			Message msg;
+			for (size_t i = 0; i < length; ++i)
+			{
+				if (channels[i]->pop(&msg, prototype, sig))
+				{
+					if (out) 
+					{
+						*out = channels[i];
+					}
+					return msg;
+				}
+			}
+
+			return Message();
+		}
+
+		Message wait(ReceivingChannel ** channels, size_t length, size_t timeoutMillis, ReceivingChannel ** out, Message * prototype, size_t sig)
+		{
+			LARGE_INTEGER timer;
+			QueryPerformanceCounter(&timer);
+
+			LARGE_INTEGER start;
+			QueryPerformanceCounter(&start);
+
+			LARGE_INTEGER freq;
+			QueryPerformanceFrequency(&freq);
+
+			while(timeoutMillis == ~0u || (timer.QuadPart - start.QuadPart) * 1000 < freq.QuadPart * timeoutMillis)
+			{
+				Message result = pick(channels, length, out, prototype, sig);
+				if (result)
+				{
+					return result;
+				}
+				QueryPerformanceCounter(&timer);
+			}
+
+			return Message();
 		}
 	}
 }
