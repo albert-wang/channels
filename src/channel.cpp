@@ -7,7 +7,7 @@
 namespace Engine
 {
 	//Matching.
-	namespace Threading
+	namespace Channels2
 	{
 		bool matches(const Message& target, const Message& prototype, size_t significance)
 		{
@@ -31,7 +31,7 @@ namespace Engine
 	}
 
 	//Receiving Channel
-	namespace Threading
+	namespace Channels2
 	{
 		Message ReceivingChannel::pop()
 		{
@@ -47,7 +47,7 @@ namespace Engine
 	}
 
 	//Channel
-	namespace Threading
+	namespace Channels2
 	{
 		boost::shared_ptr<Channel> Channel::create() 
 		{
@@ -109,7 +109,7 @@ namespace Engine
 	}
 
 	//Utilities
-	namespace Threading
+	namespace Channels2
 	{
 #ifdef USER_TIMERS
 		void schedule(TimerCollection * collection, wpSendingChannel channel, size_t milliseconds)
@@ -169,13 +169,13 @@ namespace Engine
 		ChannelWait::ChannelWait(SendingChannel * channel)
 			:channel(channel)
 		{
-			evented = CreateEvent(nullptr, FALSE, FALSE, nullptr);
+			evented = CreateEvent(nullptr, TRUE, FALSE, nullptr);
 		}
 
 		ChannelWait::ChannelWait(spSendingChannel channel)
 			:channel(channel.get())
 		{
-			evented = CreateEvent(nullptr, FALSE, FALSE, nullptr);
+			evented = CreateEvent(nullptr, TRUE, FALSE, nullptr);
 		}
 
 		ChannelWait::~ChannelWait()
@@ -211,7 +211,17 @@ namespace Engine
 				waitDuration = INFINITE;
 			}
 
-			WaitForSingleObject(evented, waitDuration);
+			DWORD res = WaitForSingleObject(evented, waitDuration);
+			if (res == WAIT_FAILED)
+			{
+				//failure state.
+			}
+		}
+
+		bool ChannelWait::done() const
+		{
+			DWORD res = WaitForSingleObject(evented, 0);
+			return res == WAIT_OBJECT_0;
 		}
 	}
 }

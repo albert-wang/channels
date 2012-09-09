@@ -4,23 +4,38 @@
 
 int main(int argc, char * argv[])
 {
-	using namespace Engine::Threading;
+	using namespace Engine::Channels2;
 
 	spChannel channel = Channel::create();
 
 	ChannelWait wait(channel);
-	wait.setWait(Message(13, 1000000 - 1), SIGNIFICANCE_INTEGRAL | SIGNIFICANCE_TYPE);
+	wait.setWait(Message(7, 1000000 - 1), SIGNIFICANCE_INTEGRAL | SIGNIFICANCE_TYPE);
 
-	boost::thread subthread([channel]()
+	for (size_t j = 0; j < 8; ++j)
 	{
-		for (size_t i = 0; i < 1000000; ++i)
+		boost::thread subthread([j, channel]()
 		{
-			channel->push(13, i, std::string("Hello, World!"));
-		}
-	});
+			for (size_t i = 0; i < 1000000; ++i)
+			{
+				channel->push(j, i, std::string("Hello, World!"));
+			}
+		});
+	}
+
+	for (size_t j = 0; j < 4; ++j)
+	{
+		boost::thread subthread([&wait, channel]()
+		{
+			while (!wait.done())
+			{
+				process(channel, [](const Message& msg) {});
+			}
+		});
+	}
 
 	LARGE_INTEGER start;
 	QueryPerformanceCounter(&start);
+	
 	wait.wait();
 
 	LARGE_INTEGER end;
@@ -31,8 +46,5 @@ int main(int argc, char * argv[])
 
 	std::cout << (end.QuadPart - start.QuadPart) / static_cast<double>(freq.QuadPart) << "\n";
 
-	process(channel, [](const Message& msg) 
-	{
-		//std::cout << msg.integralValue << " " << msg.arbitraryParam<std::string>() << "\n";
-	});
+	
 }

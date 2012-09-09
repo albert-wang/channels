@@ -15,7 +15,7 @@
 #endif
 namespace Engine
 {
-	namespace Threading
+	namespace Channels2
 	{
 		//Significance bits
 		enum SignificanceBits
@@ -29,6 +29,7 @@ namespace Engine
 		{
 			NULL_MESSAGE = 0, 
 			TIMER_FINISHED,
+			ACTION_FINISHED, 
 		};
 
 		struct Message
@@ -238,6 +239,7 @@ namespace Engine
 			
 			void setWait(const Message& proto, size_t significance);
 			void wait(size_t timeoutMillis = ~0u);
+			bool done() const;
 			
 			bool pushed(const Message& msg);
 		private:
