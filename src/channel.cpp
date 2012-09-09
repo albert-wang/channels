@@ -1,5 +1,8 @@
 #include "channel.hpp"
+
+#ifdef USE_TIMERS
 #include "timer.h"
+#endif
 
 namespace Engine
 {
@@ -46,53 +49,69 @@ namespace Engine
 	//Channel
 	namespace Threading
 	{
-		boost::intrusive_ptr<Channel> Channel::create() 
+		boost::shared_ptr<Channel> Channel::create() 
 		{
-			Channel * ch = new Channel();
-			return boost::intrusive_ptr<Channel>(ch);
+			return boost::make_shared<Channel>();
 		}
 
 		Channel::Channel()
-			:referenceCount(0)
-		{}
-
-		bool Channel::pop(Message * msg, Message * prototype, size_t sig)
 		{
-			boost::mutex::scoped_lock lock(mutex);
-			if (messages.empty())
+			InitializeCriticalSection(&observerLock);
+		}
+
+		Channel::~Channel()
+		{
+			DeleteCriticalSection(&observerLock);
+		}
+
+		bool Channel::pop(Message * msg)
+		{
+			bool popped = messages.try_pop(*msg);
+
+			if (!popped)
 			{
 				msg->type = NULL_MESSAGE;
-				return false;
 			}
 
-			if (prototype)
-			{
-				Message& attemptedMatch = messages.front();
-				if (matches(attemptedMatch, *prototype, sig))
-				{
-					*msg = std::move(attemptedMatch);
-					messages.pop_front();
-					return true;
-				}
-				return false;
-			}
-			else 
-			{
-				*msg = std::move(messages.front());
-				messages.pop_front();
-				return true;
-			}
+			return popped;
 		}
 
 		void Channel::emplace(Message&& msg)
 		{
-			messages.emplace_back(msg);
+			if (!observers.empty())
+			{
+				EnterCriticalSection(&observerLock);
+				
+				size_t size = observers.unsafe_size();
+				size_t processed = 0;
+				IChannelCallback * callback = nullptr;
+
+				while(processed < size && observers.try_pop(callback))
+				{
+					++processed;
+					if (!callback->pushed(static_cast<const Message&>(msg)))
+					{
+						observers.push(callback);
+					}
+				}
+
+				LeaveCriticalSection(&observerLock);
+			}
+
+
+			messages.push(msg);
+		}
+
+		void Channel::observe(IChannelCallback * observer)
+		{
+			observers.push(observer);
 		}
 	}
 
 	//Utilities
 	namespace Threading
 	{
+#ifdef USER_TIMERS
 		void schedule(TimerCollection * collection, wpSendingChannel channel, size_t milliseconds)
 		{
 			collection->addTimer(static_cast<double>(milliseconds) / 1000.0, [channel]()
@@ -122,13 +141,14 @@ namespace Engine
 				}
 			});
 		}
+#endif
 
-		Message pick(ReceivingChannel ** channels, size_t length, ReceivingChannel ** out, Message * prototype, size_t sig)
+		Message pick(ReceivingChannel ** channels, size_t length, ReceivingChannel ** out)
 		{
 			Message msg;
 			for (size_t i = 0; i < length; ++i)
 			{
-				if (channels[i]->pop(&msg, prototype, sig))
+				if (channels[i]->pop(&msg))
 				{
 					if (out) 
 					{
@@ -141,28 +161,57 @@ namespace Engine
 			return Message();
 		}
 
-		Message wait(ReceivingChannel ** channels, size_t length, size_t timeoutMillis, ReceivingChannel ** out, Message * prototype, size_t sig)
+		namespace
 		{
-			LARGE_INTEGER timer;
-			QueryPerformanceCounter(&timer);
+			//The Waiting callback. 
+		}
 
-			LARGE_INTEGER start;
-			QueryPerformanceCounter(&start);
+		ChannelWait::ChannelWait(SendingChannel * channel)
+			:channel(channel)
+		{
+			evented = CreateEvent(nullptr, FALSE, FALSE, nullptr);
+		}
 
-			LARGE_INTEGER freq;
-			QueryPerformanceFrequency(&freq);
+		ChannelWait::ChannelWait(spSendingChannel channel)
+			:channel(channel.get())
+		{
+			evented = CreateEvent(nullptr, FALSE, FALSE, nullptr);
+		}
 
-			while(timeoutMillis == ~0u || (timer.QuadPart - start.QuadPart) * 1000 < freq.QuadPart * timeoutMillis)
+		ChannelWait::~ChannelWait()
+		{
+			CloseHandle(evented);
+		}
+
+		bool ChannelWait::pushed(const Message& msg)
+		{
+			if (matches(msg, prototype, significance))
 			{
-				Message result = pick(channels, length, out, prototype, sig);
-				if (result)
-				{
-					return result;
-				}
-				QueryPerformanceCounter(&timer);
+				SetEvent(evented);
+				return true;
+			}
+			
+			return false;
+		}
+
+		void ChannelWait::setWait(const Message& proto, size_t sig)
+		{
+			prototype = proto;
+			significance = sig;
+
+			ResetEvent(evented);
+			channel->observe(this);
+		}
+		
+		void ChannelWait::wait(size_t timeoutNanos)
+		{
+			size_t waitDuration = timeoutNanos / 1000;
+			if (timeoutNanos == ~0u)
+			{
+				waitDuration = INFINITE;
 			}
 
-			return Message();
+			WaitForSingleObject(evented, waitDuration);
 		}
 	}
 }

@@ -8,6 +8,7 @@
 #include <boost/any.hpp>
 #include <boost/thread.hpp>
 #include <boost/smart_ptr.hpp>
+#include <concurrent_queue.h>
 
 #ifdef _WIN32
 #	include <Windows.h>
@@ -34,10 +35,16 @@ namespace Engine
 		{
 		public:
 			template<typename T>
-			Message(boost::uint32_t type, boost::uint32_t integral, T value)
+			Message(boost::uint32_t type, boost::uint64_t integral, T value)
 				:type(type)
 				,integralValue(integral)
 				,storage(value)
+			{}
+
+			Message(boost::uint32_t type, boost::uint64_t integral)
+				:type(type)
+				,integralValue(integral)
+				,storage()
 			{}
 
 			Message()
@@ -86,7 +93,13 @@ namespace Engine
 		public:
 			Message pop();
 
-			virtual bool pop(Message * msg, Message * prototype = nullptr, size_t significance = 0) = 0;
+			virtual bool pop(Message * msg) = 0;
+		};
+
+		class IChannelCallback
+		{
+		public:
+			virtual bool pushed(const Message& msg) = 0;
 		};
 
 		class SendingChannel
@@ -119,6 +132,7 @@ namespace Engine
 #endif
 
 			virtual void emplace(Message&& value) = 0;
+			virtual void observe(IChannelCallback * observer) = 0;
 		};
 	
 //Used as push(MSG(a, b, c)
@@ -135,16 +149,21 @@ namespace Engine
 		 */
 		class Channel : public ReceivingChannel, public SendingChannel
 		{
-			Channel();
 		public:
-			static boost::intrusive_ptr<Channel> create();
+			static boost::shared_ptr<Channel> create();
 
+			Channel();
+			~Channel();
+			
 			using ReceivingChannel::pop;
-			bool pop(Message * msg, Message * prototype = nullptr, size_t sig = 0);
+			bool pop(Message * msg);
 			void emplace(Message&& value);
+			void observe(IChannelCallback * observer);
 		private:
-			boost::mutex mutex;
-			std::deque<Message> messages;
+			concurrency::concurrent_queue<Message> messages;
+
+			CRITICAL_SECTION observerLock;
+			concurrency::concurrent_queue<IChannelCallback *> observers;
 		};
 
 		typedef boost::shared_ptr<Channel> spChannel;
@@ -155,12 +174,14 @@ namespace Engine
 		typedef boost::weak_ptr<SendingChannel> wpSendingChannel;
 		typedef boost::weak_ptr<ReceivingChannel> wpReceivingChannel;
 
+#ifdef USE_TIMERS
 		class TimerCollection;
 		void schedule(TimerCollection * collection, wpSendingChannel channel, size_t milliseconds, const Message& msg);
 		void schedule(TimerCollection * collection, wpSendingChannel channel, size_t milliseconds);
+#endif
 
 		template<typename It>
-		Message pick(It begin, It end, ReceivingChannel ** out = nullptr, Message * prototype = nullptr, size_t significance = 0)
+		Message pick(It begin, It end, ReceivingChannel ** out = nullptr)
 		{
 			std::vector<ReceivingChannel *> channels;
 			while(begin != end)
@@ -172,26 +193,12 @@ namespace Engine
 			return pick(&channels[0], channels.size(), out, prototype, significance);
 		}
 
-		Message pick(ReceivingChannel ** channels, size_t length, ReceivingChannel ** out = nullptr, Message * prototype = nullptr, size_t sig = 0);
-
-		template<typename It>
-		Message wait(It begin, It end, size_t timeoutMillis, ReceivingChannel ** out = nullptr, Message * prototype = nullptr, size_t significance = 0)
-		{
-			std::vector<ReceivingChannel *> channels;
-			while(begin != end)
-			{
-				channels.push_back((*begin).get());
-				++begin;
-			}
-
-			return wait(&channels[0], channels.size(), out, prototype, significance);
-		}
-
-		Message wait(ReceivingChannel ** channels, size_t length, size_t timeoutMillis, ReceivingChannel ** out = nullptr, Message * prototype = nullptr, size_t sig = 0);
+		Message pick(ReceivingChannel ** channels, size_t length, ReceivingChannel ** out = nullptr);
 
 		template<typename It, typename T> 
 		size_t process(It begin, It end, const T& callbacks)
 		{
+			size_t count = 0;
 			while(begin != end)
 			{
 				ReceivingChannel * channel = *begin;
@@ -200,10 +207,12 @@ namespace Engine
 				while (channel->pop(&msg))
 				{
 					callbacks(msg);
+					++count;
 				}
 
 				++begin;
 			}
+			return count;
 		}
 
 		template<typename T> 
@@ -211,6 +220,33 @@ namespace Engine
 		{
 			process(channels, channels + length, callback);
 		}
+
+		template<typename T>
+		void process(spReceivingChannel channel, const T& callback)
+		{
+			ReceivingChannel * ch = channel.get();
+			process(&ch, 1, callback);
+		}
+
+		class ChannelWait : public IChannelCallback
+		{
+		public:
+			ChannelWait(SendingChannel * channel);
+			ChannelWait(spSendingChannel channel);
+
+			~ChannelWait();
+			
+			void setWait(const Message& proto, size_t significance);
+			void wait(size_t timeoutMillis = ~0u);
+			
+			bool pushed(const Message& msg);
+		private:
+			SendingChannel * channel;
+
+			Message prototype;
+			size_t significance;
+			HANDLE evented;
+		};
 
 		//Helpful utilities.
 		/*
